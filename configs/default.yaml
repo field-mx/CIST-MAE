@@ -1,0 +1,55 @@
+# ============================================================
+# CIST-MAE 默认超参数配置
+# Channel-Independent Spatio-Temporal Masked Autoencoder
+# ============================================================
+
+# --- 数据参数 ---
+data:
+  num_sensors: 64            # N: 传感器总数
+  seq_len: 128               # L: 历史时序窗口长度
+  train_ratio: 0.8           # 训练集比例
+  val_ratio: 0.1             # 验证集比例
+  data_dir: "data/raw"       # 原始数据路径
+
+# --- 模型参数 ---
+model:
+  d_model: 128               # D: 隐空间维度
+  mask_ratio: 0.5            # 空间掩码率
+
+  # 时序编码器
+  temporal_encoder:
+    conv_channels: [1, 32, 64]   # 因果卷积通道数
+    kernel_sizes: [5, 3]         # 卷积核大小
+    pool_type: "attention"       # 池化类型: attention / exp_decay
+
+  # 空间编码器 (重型)
+  spatial_encoder:
+    num_layers: 4                # Transformer 层数
+    num_heads: 8                 # 多头注意力头数
+    ffn_dim: 512                 # FFN 中间维度
+    dropout: 0.1
+
+  # 空间解码器 (轻量)
+  spatial_decoder:
+    num_layers: 2                # Transformer 层数
+    num_heads: 8
+    ffn_dim: 512
+    dropout: 0.1
+
+# --- 训练参数 ---
+training:
+  batch_size: 32
+  epochs: 200
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_scheduler: "cosine"     # 学习率调度: cosine / step
+  warmup_epochs: 10
+  grad_clip: 1.0             # 梯度裁剪
+  seed: 42
+
+# --- 日志与保存 ---
+logging:
+  log_dir: "runs/"
+  save_dir: "checkpoints/"
+  save_every: 10             # 每隔 N epoch 保存
+  log_every: 100             # 每隔 N step 记录
