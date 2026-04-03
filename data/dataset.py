@@ -65,4 +65,5 @@ if __name__ == "__main__":
     ds.process()                              # 处理数据
     print("train:", ds.train_tensor.shape)    # 用同一个实例获取结果
     print("val:  ", ds.val_tensor.shape)
-    print("test: ", ds.test_tensor.shape)       
+    print("test: ", ds.test_tensor.shape)  
+    print("hello")     
