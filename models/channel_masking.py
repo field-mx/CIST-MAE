@@ -24,29 +24,48 @@ class ChannelMasking(nn.Module):
     def __init__(self, mask_ratio: float = 0.5):
         super().__init__()
         self.mask_ratio = mask_ratio
-
-    def forward(self, x: torch.Tensor):
+        
+    def z_score(self, x:torch.Tensor)->torch.Tensor:
         """
         Args:
             x: 输入张量, shape (data, channel)
         Returns:
-            x_visible: 可见传感器数据, 形状 (M, L)
-            mask_indices: 被掩码的传感器索引, 一维张量
-            visible_indices: 可见传感器索引, 一维张量
+            x_zscore: 标准化后的张量, shape (data, channel)
         """
-        # get number of sensors
-        num_sensors = x.shape[1]
-        # calculate number of masked sensors
-        num_masked = int(num_sensors * self.mask_ratio)
-        # generate mask indices
-        self.mask_indices = torch.randperm(num_sensors)[:num_masked]
-        self.visible_indices = torch.randperm(num_sensors)[num_masked:]
-        # get visible data
-        self.x_visible = x[:, self.visible_indices]
-        # get masked data
-        self.x_masked = x[:, self.mask_indices]
+        # get shape of data
+        D, C = x.shape
+        # calculate mean and std
+        mean = x.mean(dim=0)
+        std = x.std(dim=0)
+        # z-score normalization
+        x_zscore = (x - mean) / std
+        return x_zscore
+    # 随机掩码函数
+    # input：(data, channel),mask_ratio
+    # output：(data, channel_masked)        
+            
+    def forward(self, x: torch.Tensor):
+        """
+        Args:
+            x: 输入张量, shape (batch, data, channel)
+        Returns:
+            mask_matrix: 掩码矩阵 形状 (batch, channel_unmasked)
+        """
+        # 1. 获取三维数据大小 [B, L, C]
+        B, L, C = x.shape
         
-        return self.x_visible, self.mask_indices, self.visible_indices
+        # calculate number of masked sensors
+        num_masked = int(C * self.mask_ratio)
+        c = C - num_masked  # c 为处在 0-C 之间的可见通道数
+        
+        # 2. 根据掩码率生成掩码矩阵 [B, c] 和 [B, num_masked]
+        # (因为你需要 [B, c] 维度的不重复随机索引，最简洁的写法就是用 argsort)
+        noise = torch.rand(B, C, device=x.device)
+        shuffle_indices = torch.argsort(noise, dim=1)
+        self.mask_indices = shuffle_indices[:, :num_masked]       # [B, num_masked]
+        self.visible_indices = shuffle_indices[:, num_masked:]    # [B, c]
+        # 返回
+        return self.visible_indices, self.mask_indices
 
 #module 功能测试
 if __name__ == "__main__":
@@ -59,6 +78,7 @@ if __name__ == "__main__":
     
     dataset = DataSeperate(file_path=excel_path)  # 创建一个实例
     dataset.process()  
+
     # get train data
     ChannelMasking = ChannelMasking() 
     ChannelMasking.forward(dataset.train_tensor)
