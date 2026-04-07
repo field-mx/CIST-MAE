@@ -45,8 +45,7 @@ class DataSeperate:
         train_std = train_data.std(axis=0)
         train_std[train_std == 0] = 1
         train_data = (train_data - train_mean) / train_std
-        val_data = (val_data - train_mean) / train_std
-        test_data = (test_data - train_mean) / train_std
+        
 
         # change to tensor and save new tensor
         self.train_tensor = torch.from_numpy(train_data)

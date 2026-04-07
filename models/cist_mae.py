@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .dataset import DataSeperate
 from .channel_masking import ChannelMasking
 from .temporal_encoder import TemporalEncoder
 from .spatial_encoder import SpatialEncoder

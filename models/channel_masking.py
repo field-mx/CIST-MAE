@@ -15,7 +15,7 @@
 
 import torch
 import torch.nn as nn
-from dataset import DataSeperate
+from .dataset import DataSeperate
 
 
 class ChannelMasking(nn.Module):  
@@ -40,14 +40,15 @@ class ChannelMasking(nn.Module):
         num_masked = int(num_sensors * self.mask_ratio)
         # generate mask indices
         self.mask_indices = torch.randperm(num_sensors)[:num_masked]
-        # generate visible indices
         self.visible_indices = torch.randperm(num_sensors)[num_masked:]
         # get visible data
         self.x_visible = x[:, self.visible_indices]
         # get masked data
         self.x_masked = x[:, self.mask_indices]
+        
+        return self.x_visible, self.mask_indices, self.visible_indices
 
-""" module 功能测试
+#module 功能测试
 if __name__ == "__main__":
     # 直接运行本文件时执行
     import os
@@ -62,6 +63,6 @@ if __name__ == "__main__":
     ChannelMasking = ChannelMasking() 
     ChannelMasking.forward(dataset.train_tensor)
     print("x_visible_shape:", ChannelMasking.x_visible.shape)
-"""                    
+                  
     
     
