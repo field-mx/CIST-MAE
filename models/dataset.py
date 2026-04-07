@@ -43,6 +43,7 @@ class DataSeperate:
         # z-score initial(only for train_data)
         train_mean = train_data.mean(axis=0)
         train_std = train_data.std(axis=0)
+        train_std[train_std == 0] = 1
         train_data = (train_data - train_mean) / train_std
         val_data = (val_data - train_mean) / train_std
         test_data = (test_data - train_mean) / train_std
@@ -52,7 +53,7 @@ class DataSeperate:
         self.val_tensor = torch.from_numpy(val_data)
         self.test_tensor = torch.from_numpy(test_data)
 
-
+"""
 if __name__ == "__main__":
     # 直接运行本文件时执行
     import os
@@ -67,3 +68,4 @@ if __name__ == "__main__":
     print("val:  ", ds.val_tensor.shape)
     print("test: ", ds.test_tensor.shape)  
     print("hello")     
+"""
