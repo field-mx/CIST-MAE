@@ -118,11 +118,9 @@ class TemporalEncoder(nn.Module):
         x = self.relu(x)
         x = self.conv3(x)
         x = self.relu(x)
-        
         # 卷积完后，x 的形状是 [B*c, 128, L_final]，例如 [B*c, 128, 32]
         d_conv = x.shape[1]      # 特征厚度 (128)
         L_final = x.shape[2]     # 最终的序列长度 (32)
-        
         # 解压复原
         # 把 B 和 c 重新拆开，形状恢复并对准 [B, c, 特征厚度128, 时序长度32]
         x = x.view(B_dim, c_dim, d_conv, L_final)
