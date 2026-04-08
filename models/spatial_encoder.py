@@ -29,7 +29,7 @@ class SpatialEncoder(nn.Module):
         self.ffn_dim = ffn_dim
         self.dropout = dropout
         
-        # 1.传感器位置编码,掩码矩阵在这里面选取位置编码,叠加时序特征输入进网络
+        # 1.传感器位置编码,掩码矩阵在这里面选取位置编码,叠加时序特征输入进网络[1, 61, 128]
         self.sensor_pos_embedding = nn.Parameter(torch.randn(1, num_sensor, d_model))
 
         # 2.Transformer Encoder层
@@ -58,7 +58,14 @@ class SpatialEncoder(nn.Module):
         # 1. 获取三维数据大小 [B, c, d_model]
         B, c, d_model = x.shape
         # 2. 根据掩码矩阵,提取已知传感器的编码
+        # batch目录,用于visible矩阵查阅[B,1]
+        batch_idx = torch.arange(B, device=x.device).unsqueeze(1)
+        # 扩展到[B,61,128]
+        sensor_pos_embedding = self.sensor_pos_embedding.expand(B, -1, -1)
+        # 提取可见传感器的位置编码
+        sensor_pos_embedding = sensor_pos_embedding[batch_idx, visible_indices]
         # 3. 时间特征叠加位置编码
+        x = x + sensor_pos_embedding
         # 4.transformer 前向传播
         x = self.encoder(x)
         return x
