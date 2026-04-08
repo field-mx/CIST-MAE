@@ -48,7 +48,7 @@ class ProjectionHead(nn.Module):
         # 16@7 -> 1@L（对应 conv1 的逆操作）
         self.deconv1 = nn.ConvTranspose1d(16, 1, kernel_size=8, stride=4, padding=0)
         
-        self.Relu = nn.ReLU()
+        self.relu = nn.ReLU()
 
     def forward(self, x: torch.Tensor):
         """
@@ -72,8 +72,8 @@ class ProjectionHead(nn.Module):
         recon = recon.unsqueeze(2)                 # [B*N, 128, 1] — 反卷积输入格式
         
         # 2.3 反卷积序列：逐步还原时序长度
-        recon = self.Relu(self.deconv3(recon))     # [B*N, 64, 3]
-        recon = self.Relu(self.deconv2(recon))     # [B*N, 16, 9]
+        recon = self.relu(self.deconv3(recon))     # [B*N, 64, 3]
+        recon = self.relu(self.deconv2(recon))     # [B*N, 16, 9]
         recon = self.deconv1(recon)                # [B*N, 1, L_raw] 最后一层不加激活
         
         # 2.4 去掉通道维度并截断/填充到精确的 L
