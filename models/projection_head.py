@@ -4,8 +4,8 @@
 
 功能：单层无激活函数的 Linear 层，将隐维度 D 投影至物理量标量 1。
 
-输入：(B, N, D)
-输出：(B, N, 1)
+输入：(B, num_sensors, d_model)
+输出：(B, num_sensors, 1)
 """
 
 import torch
