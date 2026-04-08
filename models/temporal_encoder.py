@@ -22,7 +22,7 @@
 
 
 输入：( D, C),L,Batchsize
-输出：(B, d', c)
+输出：(B, c, d'),batchsize,channel,embedding_dim
 """
 
 import torch

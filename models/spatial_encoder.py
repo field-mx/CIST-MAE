@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 """
 重型空间编码器 (SpatialEncoder)
-
+输入张量: [B, c, d_model],batchsize,channel,embedding_dim,编码后的特征维度,匹配编码器输入,暂定128
 功能：接收可见传感器的时序特征 Token，添加空间位置编码后，
      通过多层 Transformer Encoder 捕获传感器间的空间依赖关系。
 
-输入：(B, M, D)
-输出：(B, M, D)
+输出：[B, c, d_model],batchsize,channel,embedding_dim
 """
 
 import torch
