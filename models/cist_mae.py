@@ -22,12 +22,11 @@ class CIST_MAE(nn.Module):
     """
     CIST-MAE 主模型
 
-    数据流:
-        (B, N, L) -> ChannelMasking -> (B, M, L)
-                  -> TemporalEncoder -> (B, M, D)
-                  -> SpatialEncoder  -> (B, M, D)
+    数据流:B-batch；L-cut data length；N-total sensors；c-visible sensors；D-embedding dim
+            (D, N)-> TemporalEncoder -> (B, c, d)
+                  -> SpatialEncoder  -> (B, c, d)
                   -> SpatialDecoder  -> (B, N, D)
-                  -> ProjectionHead  -> (B, N, 1)
+                  -> ProjectionHead  -> (B, N, 1)/(B, N, L)
     """
 
     def __init__(self, config: dict):
