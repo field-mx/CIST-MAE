@@ -81,7 +81,7 @@ class TemporalEncoder(nn.Module):
         Args:
             x: 输入张量, shape (D, C)
         Returns:
-            x_encoded: 编码器输出, shape (B, L, c)
+            x_encoded: 编码器输出, shape [B, c, d_model]
         """
         # get shape of data
         D, C = x.shape

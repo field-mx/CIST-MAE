@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-掩码空窗拼接与轻量解码器 (SpatialDecoder)
+掩码空窗拼接与重量解码器 (SpatialDecoder)
 
 功能：使用可学习的 mask_window[B, num_masked, d_model] 填充被掩码位置，恢复所有传感器的特征，
-     添加完整空间位置编码后，通过轻量级 Transformer 解码融合。
+     添加完整空间位置编码后，通过重量 Transformer 解码融合。
 
 输入：编码器输出 (B, c, d_model)，visible_indices (B, c)，mask_indices (B, num_masked)
 输出：(B, num_sensors, d_model)
@@ -19,7 +19,7 @@ class SpatialDecoder(nn.Module):
         num_sensors = 61,
         d_model = 128,
         heads = 8,
-        layers = 2,
+        layers = 4,
         ffn_dim = 512,
         dropout = 0.1,
     ):
@@ -85,7 +85,7 @@ class SpatialDecoder(nn.Module):
         # 4. 添加完整的空间位置编码（全部 61 个传感器都加）
         x_full = x_full + self.sensor_pos_embedding
 
-        # 5. 轻量 Transformer 解码
+        # 5. 解码
         decoded = self.decoder(x_full)
 
         return decoded

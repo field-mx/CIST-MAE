@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-重型空间编码器 (SpatialEncoder)
+轻量空间编码器 (SpatialEncoder)
 输入张量: [B, c, d_model],batchsize,channel,embedding_dim,编码后的特征维度,匹配编码器输入,暂定128
 功能：接收可见传感器的时序特征 Token，添加空间位置编码后，
      通过多层 Transformer Encoder 捕获传感器间的空间依赖关系。
@@ -16,10 +16,10 @@ class SpatialEncoder(nn.Module):
         self, 
         num_sensor = 61,
         d_model = 128,
-        heads = 8,
-        layers = 4,
-        ffn_dim = 512,
-        dropout = 0.1
+        heads = 4,
+        layers = 2,
+        ffn_dim = 256,
+        dropout = 0.2
     ):
         super().__init__()
         self.num_sensor = num_sensor
