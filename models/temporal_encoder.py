@@ -132,4 +132,4 @@ class TemporalEncoder(nn.Module):
         
         # 应用投影层，将 128 维变为规定的 d_model 维度
         x = self.linear(x)              # -> [B, c, d_model]
-        return x
+        return x, visible_indices, mask_indices
