@@ -86,37 +86,45 @@ def train():
 
         # --- 训练阶段 ---
         model.train()
-        optimizer.zero_grad()
-
-        # 直接将整条训练数据 (D, C) 喂入模型
-        # 模型内部自动完成：随机窗口切分 → 掩码 → 编码 → 解码 → 损失计算
-        signal_out, sequence_out, train_loss = model(train_data)
-
-        train_loss.backward()
-        if grad_clip > 0:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-        optimizer.step()
+        epoch_loss = 0.0
+        
+        # 每个 epoch 做多次前向传播，每次随机切不同的窗口
+        steps_per_epoch = 50
+        for step in range(steps_per_epoch):
+            optimizer.zero_grad()
+            signal_out, sequence_out, train_loss = model(train_data)
+            train_loss.backward()
+            if grad_clip > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            optimizer.step()
+            epoch_loss += train_loss.item()
+        
         scheduler.step()
+        avg_train_loss = epoch_loss / steps_per_epoch
 
         # --- 验证阶段 ---
         model.eval()
         with torch.no_grad():
-            _, _, val_loss = model(val_data)
+            val_losses = []
+            for _ in range(10):  # 验证也做多次取平均，减少随机性
+                _, _, vl = model(val_data)
+                val_losses.append(vl.item())
+            avg_val_loss = sum(val_losses) / len(val_losses)
 
         elapsed = time.time() - t0
         lr_now = optimizer.param_groups[0]["lr"]
 
         print(
             f"Epoch [{epoch:03d}/{epochs}]  "
-            f"Train Loss: {train_loss.item():.6f}  "
-            f"Val Loss: {val_loss.item():.6f}  "
+            f"Train Loss: {avg_train_loss:.6f}  "
+            f"Val Loss: {avg_val_loss:.6f}  "
             f"LR: {lr_now:.2e}  "
             f"Time: {elapsed:.1f}s"
         )
 
         # --- 保存最优模型 ---
-        if val_loss.item() < best_val_loss:
-            best_val_loss = val_loss.item()
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
             torch.save(
                 {
                     "epoch": epoch,

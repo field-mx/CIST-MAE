@@ -37,6 +37,8 @@ class ChannelMasking(nn.Module):
         # calculate mean and std
         mean = x.mean(dim=0)
         std = x.std(dim=0)
+        # 防止 std 为 0 导致除零产生 NaN
+        std = std.clamp(min=1e-8)
         # z-score normalization
         x_zscore = (x - mean) / std
         return x_zscore

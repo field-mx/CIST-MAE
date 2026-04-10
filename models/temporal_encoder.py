@@ -88,9 +88,8 @@ class TemporalEncoder(nn.Module):
         B = self.Batchsize
         L = self.L
         
-        # 1. data z-score
+        # 1. 创建掩码模块（z-score 已在 DataSeperate 中完成，此处不再重复）
         mask_module = ChannelMasking(mask_ratio=self.mask_ratio)
-        x = mask_module.z_score(x)
 
         # 2. Batchsize cut
         # conform start location of batch

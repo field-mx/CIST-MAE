@@ -40,12 +40,17 @@ class DataSeperate:
         train_data = raw_data[:train_len]
         val_data = raw_data[train_len:train_len+val_len]
         test_data = raw_data[train_len+val_len:]
-        # z-score initial(only for train_data)
+        # z-score normalization（用训练集的统计量标准化全部数据）
         train_mean = train_data.mean(axis=0)
         train_std = train_data.std(axis=0)
         train_std[train_std == 0] = 1
         train_data = (train_data - train_mean) / train_std
-        
+        val_data = (val_data - train_mean) / train_std
+        test_data = (test_data - train_mean) / train_std
+
+        # 保存标准化参数（部署时反标准化需要）
+        self.train_mean = torch.from_numpy(train_mean)  # [C]
+        self.train_std = torch.from_numpy(train_std)    # [C]
 
         # change to tensor and save new tensor
         self.train_tensor = torch.from_numpy(train_data)
