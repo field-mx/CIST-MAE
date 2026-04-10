@@ -35,15 +35,15 @@ class CIST_MAE(nn.Module):
         Batchsize: int = 32,
         mask_ratio: float = 0.5,
         # 空间编码器参数
-        enc_heads: int = 4,
-        enc_layers: int = 2,
-        enc_ffn_dim: int = 256,
-        enc_dropout: float = 0.2,
+        enc_heads: int = 2,
+        enc_layers: int = 1,
+        enc_ffn_dim: int = 64,
+        enc_dropout: float = 0.3,
         # 空间解码器参数
-        dec_heads: int = 8,
-        dec_layers: int = 4,
-        dec_ffn_dim: int = 512,
-        dec_dropout: float = 0.1,
+        dec_heads: int = 2,
+        dec_layers: int = 2,
+        dec_ffn_dim: int = 128,
+        dec_dropout: float = 0.4,
         # 损失权重
         lambda_signal: float = 1.0,
         lambda_sequence: float = 1.0,

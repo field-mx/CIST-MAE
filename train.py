@@ -62,6 +62,17 @@ def train():
         L=L,
         Batchsize=Batchsize,
         mask_ratio=mask_ratio,
+        # 轻量空间编码器
+        enc_heads=4,
+        enc_layers=1,
+        enc_ffn_dim=64,
+        enc_dropout=0.4,
+        # 空间解码器
+        dec_heads=4,
+        dec_layers=2,
+        dec_ffn_dim=128,
+        dec_dropout=0.4,
+        # 损失权重
         lambda_signal=lambda_signal,
         lambda_sequence=lambda_sequence,
     ).to(device)

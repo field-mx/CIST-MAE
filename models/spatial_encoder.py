@@ -17,9 +17,9 @@ class SpatialEncoder(nn.Module):
         num_sensor = 61,
         d_model = 128,
         heads = 4,
-        layers = 2,
-        ffn_dim = 256,
-        dropout = 0.2
+        layers = 1,
+        ffn_dim = 64,
+        dropout = 0.4
     ):
         super().__init__()
         self.num_sensor = num_sensor

@@ -18,10 +18,10 @@ class SpatialDecoder(nn.Module):
         self,
         num_sensors = 61,
         d_model = 128,
-        heads = 8,
-        layers = 4,
-        ffn_dim = 512,
-        dropout = 0.1,
+        heads = 4,
+        layers = 2,
+        ffn_dim = 128,
+        dropout = 0.4,
     ):
         super().__init__()
         self.num_sensors = num_sensors
