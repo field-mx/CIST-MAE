@@ -24,11 +24,11 @@ def train():
     d_model = 128
     L = 500
     Batchsize = 64
-    mask_ratio = 0.5
+    mask_ratio = 0.3
 
     # 训练参数
     # 新参数 = 当前参数 - 学习率 × ( 梯度方向 + weight_decay × 当前参数 )
-    epochs = 300
+    epochs = 500
     learning_rate = 1e-3# 学习率
     weight_decay = 1e-2# 正则化 每次更新的时候缩小一点点
     grad_clip = 1.0# 梯度裁剪 防止梯度爆炸
@@ -87,6 +87,16 @@ def train():
 
     for epoch in range(1, epochs + 1):
         t0 = time.time()
+
+        # ============== 动态难度退火法 ==============
+        # 前期用 0.2 让它轻松学会大波形，后期逐渐拉到 1.0 死磕单点精度
+        '''
+        progress = (epoch - 1) / epochs
+        current_lambda = 0.1 + progress * (1.0 - 0.1)
+        model.lambda_signal = current_lambda
+        model.lambda_sequence = 1.0 - current_lambda
+        '''
+        # ============================================
 
         # --- 训练阶段 ---
         model.train()
