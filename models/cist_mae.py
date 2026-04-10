@@ -33,26 +33,25 @@ class CIST_MAE(nn.Module):
         d_model: int = 128,
         L: int = 500,
         Batchsize: int = 32,
-        mask_ratio: float = 0.5,
+        mask_ratio: float = 0.1,
         # 空间编码器参数
-        enc_heads: int = 2,
-        enc_layers: int = 1,
-        enc_ffn_dim: int = 64,
+        enc_heads: int = 4,
+        enc_layers: int = 3,
+        enc_ffn_dim: int = 128,
         enc_dropout: float = 0.3,
         # 空间解码器参数
-        dec_heads: int = 2,
+        dec_heads: int = 4,
         dec_layers: int = 2,
-        dec_ffn_dim: int = 128,
-        dec_dropout: float = 0.4,
+        dec_ffn_dim: int = 64,
+        dec_dropout: float = 0.2,
         # 损失权重
-        lambda_signal: float = 1.0,
-        lambda_sequence: float = 1.0,
+        lambda_signal: float = 0.2,
     ):
         super().__init__()
         self.num_sensors = num_sensors
         self.L = L
         self.lambda_signal = lambda_signal
-        self.lambda_sequence = lambda_sequence
+        self.lambda_sequence = 1-lambda_signal
 
         # 1. 时序编码器（内部包含 z-score、批次切分、通道掩码、因果卷积、池化）
         self.temporal_encoder = TemporalEncoder(

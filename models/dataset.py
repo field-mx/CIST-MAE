@@ -9,7 +9,7 @@ class DataSeperate:
     def __init__(
         self,
         file_path:str = ".\data\SensorData.xlsx",
-        spilt_ratio:tuple = (0.7, 0.2, 0.1),
+        spilt_ratio:tuple = (0.8, 0.1, 0.1),
         
     ):
         self.file_path = file_path
@@ -32,14 +32,24 @@ class DataSeperate:
         # cut data from file
         raw_data = df.iloc[self.row_start:self.row_end, self.col_start:self.col_end].values.astype(np.float32)
         data_len = raw_data.shape[0]
-        # caculate len of train, val, test
-        train_len = int(data_len * self.spilt_ratio[0])
-        val_len = int(data_len * self.spilt_ratio[1])
-        test_len = int(data_len * self.spilt_ratio[2])
-        # cut data from train, val, test
-        train_data = raw_data[:train_len]
-        val_data = raw_data[train_len:train_len+val_len]
-        test_data = raw_data[train_len+val_len:]
+        
+        # 区间块分配：将时间序列切成连续块，随机分配给 train/val/test
+        # 每个块内部保持时间连续性（卷积需要），块之间随机分配（消除时间漂移）
+        block_size = 1000  # 每个块的时间步长度
+        num_blocks = data_len // block_size
+        # 将数据切成若干完整的块
+        blocks = [raw_data[i * block_size : (i + 1) * block_size] for i in range(num_blocks)]
+        # 随机打散块的顺序
+        np.random.seed(42)
+        perm = np.random.permutation(num_blocks)
+        blocks = [blocks[i] for i in perm]
+        # 按比例分配块
+        train_n = int(num_blocks * self.spilt_ratio[0])
+        val_n = int(num_blocks * self.spilt_ratio[1])
+        # 拼接各集合的块
+        train_data = np.concatenate(blocks[:train_n], axis=0)
+        val_data = np.concatenate(blocks[train_n:train_n + val_n], axis=0)
+        test_data = np.concatenate(blocks[train_n + val_n:], axis=0)
         # z-score normalization（用训练集的统计量标准化全部数据）
         train_mean = train_data.mean(axis=0)
         train_std = train_data.std(axis=0)

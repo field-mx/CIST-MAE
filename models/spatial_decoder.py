@@ -26,6 +26,10 @@ class SpatialDecoder(nn.Module):
         super().__init__()
         self.num_sensors = num_sensors
         self.d_model = d_model
+        self.heads = heads
+        self.layers = layers
+        self.ffn_dim = ffn_dim
+        self.dropout = dropout
 
         # 1. 可学习的掩码占位符 [MASK] token
         # 形状 [1, 1, d_model]，后续会自动广播到 [B, num_masked, d_model]
@@ -36,14 +40,14 @@ class SpatialDecoder(nn.Module):
 
         # 3. 轻量 Transformer Decoder 层（比编码器少，仅 2 层）
         decoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=heads,
-            dim_feedforward=ffn_dim,
-            dropout=dropout,
+            d_model=self.d_model,
+            nhead=self.heads,
+            dim_feedforward=self.ffn_dim,
+            dropout=self.dropout,
             activation='gelu',
             batch_first=True
         )
-        self.decoder = nn.TransformerEncoder(decoder_layer, num_layers=layers)
+        self.decoder = nn.TransformerEncoder(decoder_layer, num_layers=self.layers)
 
     def forward(
         self,

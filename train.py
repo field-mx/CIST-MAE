@@ -18,22 +18,24 @@ def train():
     # 数据参数
     excel_path = os.path.join("data", "SensorData.xlsx")
     num_sensors = 61
+    patience = 50
 
     # 模型参数
     d_model = 128
     L = 500
-    Batchsize = 32
+    Batchsize = 64
     mask_ratio = 0.5
 
     # 训练参数
-    epochs = 100
-    learning_rate = 1e-3
-    weight_decay = 1e-4
-    grad_clip = 1.0
+    # 新参数 = 当前参数 - 学习率 × ( 梯度方向 + weight_decay × 当前参数 )
+    epochs = 300
+    learning_rate = 1e-3# 学习率
+    weight_decay = 1e-2# 正则化 每次更新的时候缩小一点点
+    grad_clip = 1.0# 梯度裁剪 防止梯度爆炸
 
     # 损失权重
-    lambda_signal = 1.0
-    lambda_sequence = 0.5
+    lambda_signal = 1
+
 
     # 保存路径
     save_dir = "checkpoints"
@@ -62,19 +64,8 @@ def train():
         L=L,
         Batchsize=Batchsize,
         mask_ratio=mask_ratio,
-        # 轻量空间编码器
-        enc_heads=4,
-        enc_layers=1,
-        enc_ffn_dim=64,
-        enc_dropout=0.4,
-        # 空间解码器
-        dec_heads=4,
-        dec_layers=2,
-        dec_ffn_dim=128,
-        dec_dropout=0.4,
         # 损失权重
         lambda_signal=lambda_signal,
-        lambda_sequence=lambda_sequence,
     ).to(device)
 
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -90,7 +81,9 @@ def train():
 
     # ============ 6. 训练循环 ============
     best_val_loss = float("inf")
-    print(f"[INFO] 开始训练, 共 {epochs} 个 epoch\n")
+    patience = patience          # 连续多少个 epoch 不降就提前停止
+    patience_counter = 0
+    print(f"[INFO] 开始训练, 共 {epochs} 个 epoch (Early Stopping patience={patience})\n")
 
     for epoch in range(1, epochs + 1):
         t0 = time.time()
@@ -136,6 +129,7 @@ def train():
         # --- 保存最优模型 ---
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
+            patience_counter = 0  # 重置计数器
             torch.save(
                 {
                     "epoch": epoch,
@@ -146,6 +140,11 @@ def train():
                 os.path.join(save_dir, "best.pth"),
             )
             print(f"  -> 保存最优模型 (val_loss={best_val_loss:.6f})")
+        else:
+            patience_counter += 1
+            if patience_counter >= patience:
+                print(f"\n[INFO] Early Stopping! 验证损失连续 {patience} 个 epoch 未下降。")
+                break
 
         # --- 定期保存 ---
         if epoch % 20 == 0:
@@ -154,7 +153,18 @@ def train():
                 os.path.join(save_dir, f"epoch_{epoch:03d}.pth"),
             )
 
-    print(f"\n[INFO] 训练完成! 最优验证损失: {best_val_loss:.6f}")
+    print(f"\n=============================================")
+    print(f"[INFO] 训练完成! 统计参数如下：")
+    print(f"- 训练集大小: {train_data.shape}")
+    print(f"- 验证集大小: {val_data.shape}")
+    print(f"- 总参数量: {num_params:,}")
+    print(f"- D_model: {d_model}")
+    print(f"- 编码器配置: Layers={model.spatial_encoder.layers}, Heads={model.spatial_encoder.heads}, FFN={model.spatial_encoder.ffn_dim}, Dropout={model.spatial_encoder.dropout}")
+    print(f"- 解码器配置: Layers={model.spatial_decoder.layers}, Heads={model.spatial_decoder.heads}, FFN={model.spatial_decoder.ffn_dim}, Dropout={model.spatial_decoder.dropout}")
+    print(f"- 损失权重: Signal={lambda_signal}, Sequence={1-lambda_signal}")
+    print(f"- 掩码比例 (Mask Ratio): {mask_ratio}")
+    print(f">> 最优验证损失 (Best Val Loss): {best_val_loss:.6f}")
+    print(f"=============================================\n")
 
 
 if __name__ == "__main__":
