@@ -1,198 +1,142 @@
 # -*- coding: utf-8 -*-
 """
-CIST-MAE 训练入口
+CIST-MAE 训练脚本
 
 Usage:
-    python train.py --config configs/default.yaml
+    python train.py
 """
 
-import argparse
 import os
-import random
 import time
-
-import numpy as np
 import torch
-import yaml
-from torch.utils.data import DataLoader, random_split
-
-from data.dataset import MockSensorDataset, SensorDataset
-from models import CIST_MAE
-from utils.metrics import evaluate_reconstruction
+from models.dataset import DataSeperate
+from models.cist_mae import CIST_MAE
 
 
-def set_seed(seed: int):
-    """固定随机种子以确保可复现性"""
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
+def train():
+    # ============ 1. 超参数配置 ============
+    # 数据参数
+    excel_path = os.path.join("data", "SensorData.xlsx")
+    num_sensors = 61
 
+    # 模型参数
+    d_model = 128
+    L = 500
+    Batchsize = 32
+    mask_ratio = 0.5
 
-def load_config(config_path: str) -> dict:
-    """加载 YAML 配置文件"""
-    with open(config_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    # 训练参数
+    epochs = 100
+    learning_rate = 1e-3
+    weight_decay = 1e-4
+    grad_clip = 1.0
 
+    # 损失权重
+    lambda_signal = 1.0
+    lambda_sequence = 0.5
 
-def build_dataloaders(config: dict):
-    """构建训练/验证/测试 DataLoader"""
-    data_cfg = config["data"]
-    train_cfg = config["training"]
+    # 保存路径
+    save_dir = "checkpoints"
+    os.makedirs(save_dir, exist_ok=True)
 
-    # 使用模拟数据集进行开发调试
-    dataset = MockSensorDataset(
-        num_samples=2000,
-        num_sensors=data_cfg["num_sensors"],
-        seq_len=data_cfg["seq_len"],
-    )
-
-    # 划分数据集
-    n_total = len(dataset)
-    n_train = int(n_total * data_cfg["train_ratio"])
-    n_val = int(n_total * data_cfg["val_ratio"])
-    n_test = n_total - n_train - n_val
-
-    train_set, val_set, test_set = random_split(dataset, [n_train, n_val, n_test])
-
-    train_loader = DataLoader(
-        train_set, batch_size=train_cfg["batch_size"], shuffle=True, num_workers=0
-    )
-    val_loader = DataLoader(
-        val_set, batch_size=train_cfg["batch_size"], shuffle=False, num_workers=0
-    )
-    test_loader = DataLoader(
-        test_set, batch_size=train_cfg["batch_size"], shuffle=False, num_workers=0
-    )
-
-    return train_loader, val_loader, test_loader
-
-
-def train_one_epoch(model, train_loader, optimizer, device, grad_clip=1.0):
-    """训练一个 epoch"""
-    model.train()
-    total_loss = 0.0
-    num_batches = 0
-
-    for x, y in train_loader:
-        x, y = x.to(device), y.to(device)
-
-        optimizer.zero_grad()
-        _, loss = model(x, y)
-        loss.backward()
-
-        if grad_clip > 0:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-
-        optimizer.step()
-
-        total_loss += loss.item()
-        num_batches += 1
-
-    return total_loss / max(num_batches, 1)
-
-
-@torch.no_grad()
-def validate(model, val_loader, device):
-    """验证"""
-    model.eval()
-    total_loss = 0.0
-    num_batches = 0
-
-    for x, y in val_loader:
-        x, y = x.to(device), y.to(device)
-        _, loss = model(x, y)
-        total_loss += loss.item()
-        num_batches += 1
-
-    return total_loss / max(num_batches, 1)
-
-
-def main():
-    parser = argparse.ArgumentParser(description="CIST-MAE Training")
-    parser.add_argument(
-        "--config", type=str, default="configs/default.yaml", help="配置文件路径"
-    )
-    args = parser.parse_args()
-
-    # --- 加载配置 ---
-    config = load_config(args.config)
-    train_cfg = config["training"]
-    log_cfg = config["logging"]
-
-    set_seed(train_cfg["seed"])
+    # ============ 2. 设备选择 ============
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[INFO] 使用设备: {device}")
 
-    # --- 构建数据与模型 ---
-    train_loader, val_loader, _ = build_dataloaders(config)
-    model = CIST_MAE(config).to(device)
+    # ============ 3. 加载数据 ============
+    print("[INFO] 加载数据...")
+    ds = DataSeperate(file_path=excel_path)
+    ds.process()
+
+    # train_tensor 形状: [D_train, C]，如 [16963, 61]
+    train_data = ds.train_tensor.to(device)  # 训练集
+    val_data = ds.val_tensor.to(device)      # 验证集
+
+    print(f"[INFO] 训练集: {train_data.shape}")
+    print(f"[INFO] 验证集: {val_data.shape}")
+
+    # ============ 4. 构建模型 ============
+    model = CIST_MAE(
+        num_sensors=num_sensors,
+        d_model=d_model,
+        L=L,
+        Batchsize=Batchsize,
+        mask_ratio=mask_ratio,
+        lambda_signal=lambda_signal,
+        lambda_sequence=lambda_sequence,
+    ).to(device)
 
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"[INFO] 模型可训练参数量: {num_params:,}")
 
-    # --- 优化器与调度器 ---
+    # ============ 5. 优化器与学习率调度器 ============
     optimizer = torch.optim.AdamW(
         model.parameters(),
-        lr=train_cfg["learning_rate"],
-        weight_decay=train_cfg["weight_decay"],
+        lr=learning_rate,
+        weight_decay=weight_decay,
     )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
-    scheduler = None
-    if train_cfg["lr_scheduler"] == "cosine":
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=train_cfg["epochs"] - train_cfg["warmup_epochs"]
-        )
-
-    # --- 训练循环 ---
-    os.makedirs(log_cfg["save_dir"], exist_ok=True)
+    # ============ 6. 训练循环 ============
     best_val_loss = float("inf")
+    print(f"[INFO] 开始训练, 共 {epochs} 个 epoch\n")
 
-    print(f"[INFO] 开始训练, 共 {train_cfg['epochs']} 个 epoch")
-    for epoch in range(1, train_cfg["epochs"] + 1):
+    for epoch in range(1, epochs + 1):
         t0 = time.time()
 
-        train_loss = train_one_epoch(
-            model, train_loader, optimizer, device, train_cfg["grad_clip"]
-        )
-        val_loss = validate(model, val_loader, device)
+        # --- 训练阶段 ---
+        model.train()
+        optimizer.zero_grad()
 
-        if scheduler is not None and epoch > train_cfg["warmup_epochs"]:
-            scheduler.step()
+        # 直接将整条训练数据 (D, C) 喂入模型
+        # 模型内部自动完成：随机窗口切分 → 掩码 → 编码 → 解码 → 损失计算
+        signal_out, sequence_out, train_loss = model(train_data)
+
+        train_loss.backward()
+        if grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+        optimizer.step()
+        scheduler.step()
+
+        # --- 验证阶段 ---
+        model.eval()
+        with torch.no_grad():
+            _, _, val_loss = model(val_data)
 
         elapsed = time.time() - t0
+        lr_now = optimizer.param_groups[0]["lr"]
 
         print(
-            f"Epoch [{epoch:03d}/{train_cfg['epochs']}] "
-            f"Train Loss: {train_loss:.6f}  Val Loss: {val_loss:.6f}  "
-            f"LR: {optimizer.param_groups[0]['lr']:.2e}  Time: {elapsed:.1f}s"
+            f"Epoch [{epoch:03d}/{epochs}]  "
+            f"Train Loss: {train_loss.item():.6f}  "
+            f"Val Loss: {val_loss.item():.6f}  "
+            f"LR: {lr_now:.2e}  "
+            f"Time: {elapsed:.1f}s"
         )
 
-        # 保存最优模型
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        # --- 保存最优模型 ---
+        if val_loss.item() < best_val_loss:
+            best_val_loss = val_loss.item()
             torch.save(
                 {
                     "epoch": epoch,
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
-                    "val_loss": val_loss,
-                    "config": config,
+                    "val_loss": best_val_loss,
                 },
-                os.path.join(log_cfg["save_dir"], "best.pth"),
+                os.path.join(save_dir, "best.pth"),
             )
-            print(f"  -> 保存最优模型 (val_loss={val_loss:.6f})")
+            print(f"  -> 保存最优模型 (val_loss={best_val_loss:.6f})")
 
-        # 定期保存
-        if epoch % log_cfg["save_every"] == 0:
+        # --- 定期保存 ---
+        if epoch % 20 == 0:
             torch.save(
                 model.state_dict(),
-                os.path.join(log_cfg["save_dir"], f"epoch_{epoch:03d}.pth"),
+                os.path.join(save_dir, f"epoch_{epoch:03d}.pth"),
             )
 
-    print(f"[INFO] 训练完成! 最优验证损失: {best_val_loss:.6f}")
+    print(f"\n[INFO] 训练完成! 最优验证损失: {best_val_loss:.6f}")
 
 
 if __name__ == "__main__":
-    main()
+    train()

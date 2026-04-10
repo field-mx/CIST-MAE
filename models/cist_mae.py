@@ -3,13 +3,14 @@
 CIST-MAE 主模型
 Channel-Independent Spatio-Temporal Masked Autoencoder
 
-将各子模块组装，实现完整的前向传播与掩码重构损失计算。
+将各子模块组装，实现完整的前向传播与自监督掩码重构损失计算。
 
-数据流: B-batch; L-cut data length; N-total sensors; c-visible sensors; d-embedding dim
-        (D, N) -> TemporalEncoder -> (B, c, d) + visible_indices + mask_indices
+数据流: D-total time steps; N-total sensors; B-batch; L-window length; c-visible sensors; d-embedding dim
+        (D, N) -> TemporalEncoder -> (B, c, d) + visible_indices + mask_indices + batch_X
                -> SpatialEncoder  -> (B, c, d)
                -> SpatialDecoder  -> (B, N, d)
-               -> ProjectionHead  -> (B, N, 1) and (B, N, L)
+               -> ProjectionHead  -> signal_out(B, N, 1) + sequence_out(B, N, L)
+               -> Loss(仅被掩码传感器)
 """
 
 import torch
@@ -43,12 +44,16 @@ class CIST_MAE(nn.Module):
         dec_layers: int = 4,
         dec_ffn_dim: int = 512,
         dec_dropout: float = 0.1,
+        # 损失权重
+        lambda_signal: float = 1.0,
+        lambda_sequence: float = 1.0,
     ):
         super().__init__()
         self.num_sensors = num_sensors
         self.L = L
+        self.lambda_signal = lambda_signal
+        self.lambda_sequence = lambda_sequence
 
-        # --- 子模块初始化 ---
         # 1. 时序编码器（内部包含 z-score、批次切分、通道掩码、因果卷积、池化）
         self.temporal_encoder = TemporalEncoder(
             d_model=d_model,
@@ -80,67 +85,60 @@ class CIST_MAE(nn.Module):
         # 4. 双分支投射头
         self.projection_head = ProjectionHead(d_model=d_model, L=L)
 
-    def forward(self, x: torch.Tensor, y_signal: torch.Tensor = None, y_sequence: torch.Tensor = None):
+    def forward(self, x: torch.Tensor):
         """
+        自监督前向传播：标签来自数据本身，无需外部提供 y。
+        
         Args:
-            x: 输入时序数据, shape (D, C)  —— D 为总时间步数, C 为传感器总数
-            y_signal: 真实标签（当前时刻物理量）, shape (B, N, 1)，训练时提供
-            y_sequence: 真实历史时序, shape (B, N, L)，训练时提供
+            x: 原始时序数据, shape (D, C)  —— D 为总时间步数, C 为传感器总数
         Returns:
             signal_out: 全部传感器的预测值, shape (B, N, 1)
             sequence_out: 全部传感器的重构时序, shape (B, N, L)
-            loss: 训练损失（训练时返回，推理时为 None）
+            loss: 自监督训练损失
         """
         # 1. 时序编码（内部完成 z-score、批次切分、掩码、卷积、池化）
-        tokens, visible_indices, mask_indices = self.temporal_encoder(x)
+        tokens, visible_indices, mask_indices, batch_X = self.temporal_encoder(x)
         # tokens: [B, c, d_model]
         # visible_indices: [B, c]
         # mask_indices: [B, num_masked]
+        # batch_X: [B, L, C] —— 标准化后的原始窗口数据（掩码前）
 
-        # 2. 空间编码（注入位置编码 + Transformer 多头注意力）
+        # 2. 空间编码
         encoded = self.spatial_encoder(tokens, visible_indices)
-        # encoded: [B, c, d_model]
+        # [B, c, d_model]
 
-        # 3. 解码融合（填充 mask_token + 恢复顺序 + Transformer 解码）
+        # 3. 解码融合
         decoded = self.spatial_decoder(encoded, visible_indices, mask_indices)
-        # decoded: [B, N, d_model]
+        # [B, N, d_model]
 
         # 4. 双分支投射
         signal_out, sequence_out = self.projection_head(decoded)
-        # signal_out: [B, N, 1]
-        # sequence_out: [B, N, L]
+        # signal_out: [B, N, 1]       每个传感器的预测标量
+        # sequence_out: [B, N, L]     每个传感器的重构时序
 
-        # --- 损失计算：仅计算被掩码传感器的重构误差 ---
-        loss = None
-        if y_signal is not None or y_sequence is not None:
-            total_loss = 0.0
+        # === 自监督损失计算 ===
+        # 真实标签来自模型内部切割出的原始窗口数据 batch_X [B, L, C]
+        B = batch_X.shape[0]
 
-            # 分支一损失：回归预测损失（仅被掩码传感器）
-            if y_signal is not None:
-                pred_signal = torch.gather(
-                    signal_out, dim=1,
-                    index=mask_indices.unsqueeze(-1).expand(-1, -1, 1),
-                )  # [B, num_masked, 1]
-                true_signal = torch.gather(
-                    y_signal, dim=1,
-                    index=mask_indices.unsqueeze(-1).expand(-1, -1, 1),
-                )  # [B, num_masked, 1]
-                loss_signal = F.mse_loss(pred_signal, true_signal)
-                total_loss = total_loss + loss_signal
+        # --- 分支一损失：回归预测 ---
+        # 真实值：取每个传感器窗口的最后一个时间点作为预测目标
+        # batch_X 形状 [B, L, C]，取最后一步 → [B, C, 1]
+        y_signal_true = batch_X[:, -1, :].unsqueeze(-1)  # [B, C, 1]
+        # 只取被掩码传感器位置的预测和真实值
+        batch_idx = torch.arange(B, device=x.device).unsqueeze(1)
+        pred_signal = signal_out[batch_idx, mask_indices]  # [B, num_masked, 1]
+        true_signal = y_signal_true[batch_idx, mask_indices]  # [B, num_masked, 1]
+        loss_signal = F.mse_loss(pred_signal, true_signal)
 
-            # 分支二损失：历史重构损失（仅被掩码传感器）
-            if y_sequence is not None:
-                pred_seq = torch.gather(
-                    sequence_out, dim=1,
-                    index=mask_indices.unsqueeze(-1).expand(-1, -1, self.L),
-                )  # [B, num_masked, L]
-                true_seq = torch.gather(
-                    y_sequence, dim=1,
-                    index=mask_indices.unsqueeze(-1).expand(-1, -1, self.L),
-                )  # [B, num_masked, L]
-                loss_seq = F.mse_loss(pred_seq, true_seq)
-                total_loss = total_loss + loss_seq
+        # --- 分支二损失：时序重构 ---
+        # 真实值：batch_X 转置为 [B, C, L]，使通道在第二维
+        y_seq_true = batch_X.permute(0, 2, 1)  # [B, C, L]
+        # 只取被掩码传感器位置
+        pred_seq = sequence_out[batch_idx, mask_indices]  # [B, num_masked, L]
+        true_seq = y_seq_true[batch_idx, mask_indices]  # [B, num_masked, L]
+        loss_sequence = F.mse_loss(pred_seq, true_seq)
 
-            loss = total_loss
+        # --- 总损失 ---
+        loss = self.lambda_signal * loss_signal + self.lambda_sequence * loss_sequence
 
         return signal_out, sequence_out, loss
