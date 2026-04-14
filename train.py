@@ -11,6 +11,7 @@ import time
 import torch
 from models.dataset import DataSeperate
 from models.cist_mae import CIST_MAE
+from DataSave import DataSaver
 
 
 def train():
@@ -18,19 +19,19 @@ def train():
     # 数据参数
     excel_path = os.path.join("data", "SensorData.xlsx")
     num_sensors = 61
-    patience = 50
+    patience = 200
 
     # 模型参数
     d_model = 128
     L = 500
-    Batchsize = 64
-    mask_ratio = 0.3
+    Batchsize = 64# 最优固定
+    mask_ratio = 0.7
 
     # 训练参数
     # 新参数 = 当前参数 - 学习率 × ( 梯度方向 + weight_decay × 当前参数 )
     epochs = 500
     learning_rate = 1e-3# 学习率
-    weight_decay = 1e-2# 正则化 每次更新的时候缩小一点点
+    weight_decay = 5e-2# 正则化 每次更新的时候缩小一点点
     grad_clip = 1.0# 梯度裁剪 防止梯度爆炸
 
     # 损失权重
@@ -84,6 +85,10 @@ def train():
     patience = patience          # 连续多少个 epoch 不降就提前停止
     patience_counter = 0
     print(f"[INFO] 开始训练, 共 {epochs} 个 epoch (Early Stopping patience={patience})\n")
+
+    # 创建保存类实例并初始化历史字典
+    saver = DataSaver(base_dir="results")
+    history = {"epoch": [], "train_loss": [], "val_loss": [], "lr": []}
 
     for epoch in range(1, epochs + 1):
         t0 = time.time()
@@ -162,6 +167,23 @@ def train():
                 model.state_dict(),
                 os.path.join(save_dir, f"epoch_{epoch:03d}.pth"),
             )
+            
+        # 记录每轮数据
+        history["epoch"].append(epoch)
+        history["train_loss"].append(avg_train_loss)
+        history["val_loss"].append(avg_val_loss)
+        history["lr"].append(lr_now)
+
+    # ============ 保存损失曲线到 CSV ============
+    exp_name = saver.get_experiment_name(mask_ratio=mask_ratio, 
+                                            d_model=d_model,
+                                            Batchsize=Batchsize,
+                                            learning_rate=learning_rate,
+                                            weight_decay=weight_decay,
+                                            grad_clip=grad_clip,
+                                            lambda_signal=lambda_signal,
+                                            )
+    saver.save_loss_to_csv(history, filename=f"loss_{exp_name}")
 
     print(f"\n=============================================")
     print(f"[INFO] 训练完成! 统计参数如下：")

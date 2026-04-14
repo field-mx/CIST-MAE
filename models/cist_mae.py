@@ -33,17 +33,17 @@ class CIST_MAE(nn.Module):
         d_model: int = 128,
         L: int = 500,
         Batchsize: int = 32,
-        mask_ratio: float = 0.1,
+        mask_ratio: float = 0.2,
         # 空间编码器参数
         enc_heads: int = 4,
-        enc_layers: int = 3,
+        enc_layers: int = 2,# 实验最优值
         enc_ffn_dim: int = 128,
-        enc_dropout: float = 0.3,
+        enc_dropout: float = 0.3,# 实验最优值
         # 空间解码器参数
         dec_heads: int = 4,
-        dec_layers: int = 2,
-        dec_ffn_dim: int = 64,
-        dec_dropout: float = 0.2,
+        dec_layers: int = 1,
+        dec_ffn_dim: int = 64,# 实验最优值
+        dec_dropout: float = 0.2,# 实验最优值
         # 损失权重
         lambda_signal: float = 0.2,
     ):
