@@ -19,13 +19,13 @@ def train():
     # 数据参数
     excel_path = os.path.join("data", "SensorData.xlsx")
     num_sensors = 61
-    patience = 200
+    patience = 100
 
     # 模型参数
     d_model = 128
     L = 500
-    Batchsize = 64# 最优固定
-    mask_ratio = 0.7
+    Batchsize = 64 # 最优固定
+    mask_ratio = 0.4
 
     # 训练参数
     # 新参数 = 当前参数 - 学习率 × ( 梯度方向 + weight_decay × 当前参数 )
@@ -111,7 +111,9 @@ def train():
         steps_per_epoch = 50
         for step in range(steps_per_epoch):
             optimizer.zero_grad()
-            signal_out, sequence_out, train_loss = model(train_data)
+            # 增加数据扰动
+            noisy_train_data = train_data + torch.rand_like(train_data) * 0.01
+            signal_out, sequence_out, train_loss = model(noisy_train_data)
             train_loss.backward()
             if grad_clip > 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
