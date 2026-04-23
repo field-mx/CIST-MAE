@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# 2026.04.23 record version
+# 2026.04.23 version 1.0 mask clustering
 """
 CIST-MAE 训练脚本
 
