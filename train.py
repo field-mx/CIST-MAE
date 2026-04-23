@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# 2026.04.23 record version
 """
 CIST-MAE 训练脚本
 
