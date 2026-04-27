@@ -45,7 +45,7 @@ class CIST_MAE(nn.Module):
         dec_ffn_dim: int = 64,# 实验最优值
         dec_dropout: float = 0.2,# 实验最优值
         # 损失权重
-        lambda_signal: float = 0.2,
+        lambda_signal: float = 1.0,
     ):
         super().__init__()
         self.num_sensors = num_sensors
@@ -135,6 +135,54 @@ class CIST_MAE(nn.Module):
         # 只取被掩码传感器位置
         pred_seq = sequence_out[batch_idx, mask_indices]  # [B, num_masked, L]
         true_seq = y_seq_true[batch_idx, mask_indices]  # [B, num_masked, L]
+        loss_sequence = F.mse_loss(pred_seq, true_seq)
+
+        # --- 总损失 ---
+        loss = self.lambda_signal * loss_signal + self.lambda_sequence * loss_sequence
+
+        return signal_out, sequence_out, loss
+
+    def forward_with_mask(self, x: torch.Tensor, 
+                          visible_indices: torch.Tensor, 
+                          mask_indices: torch.Tensor):
+        """
+        使用外部指定的掩码进行前向传播，用于掩码探测评估。
+        与 forward() 的唯一区别是掩码由外部指定而非随机生成。
+
+        Args:
+            x: 原始时序数据, shape (D, C)
+            visible_indices: 可见传感器索引, shape (B, c)
+            mask_indices: 被掩码传感器索引, shape (B, num_masked)
+        Returns:
+            signal_out, sequence_out, loss（与 forward 一致）
+        """
+        # 1. 时序编码（使用外部掩码）
+        tokens, visible_indices, mask_indices, batch_X = \
+            self.temporal_encoder.forward_with_mask(x, visible_indices, mask_indices)
+
+        # 2. 空间编码
+        encoded = self.spatial_encoder(tokens, visible_indices)
+
+        # 3. 解码融合
+        decoded = self.spatial_decoder(encoded, visible_indices, mask_indices)
+
+        # 4. 双分支投射
+        signal_out, sequence_out = self.projection_head(decoded)
+
+        # === 自监督损失计算（与 forward 完全一致）===
+        B = batch_X.shape[0]
+
+        # --- 分支一损失：回归预测 ---
+        y_signal_true = batch_X[:, -1, :].unsqueeze(-1)
+        batch_idx = torch.arange(B, device=x.device).unsqueeze(1)
+        pred_signal = signal_out[batch_idx, mask_indices]
+        true_signal = y_signal_true[batch_idx, mask_indices]
+        loss_signal = F.mse_loss(pred_signal, true_signal)
+
+        # --- 分支二损失：时序重构 ---
+        y_seq_true = batch_X.permute(0, 2, 1)
+        pred_seq = sequence_out[batch_idx, mask_indices]
+        true_seq = y_seq_true[batch_idx, mask_indices]
         loss_sequence = F.mse_loss(pred_seq, true_seq)
 
         # --- 总损失 ---

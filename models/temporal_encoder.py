@@ -132,3 +132,57 @@ class TemporalEncoder(nn.Module):
         # 应用投影层，将 128 维变为规定的 d_model 维度
         x = self.linear(x)              # -> [B, c, d_model]
         return x, visible_indices, mask_indices, batch_X
+
+    def forward_with_mask(self, x: torch.Tensor, 
+                          visible_indices: torch.Tensor, 
+                          mask_indices: torch.Tensor) -> torch.Tensor:
+        """
+        使用外部指定的掩码进行前向传播（跳过内部随机掩码），
+        用于掩码探测评估。
+
+        Args:
+            x: 输入张量, shape (D, C)
+            visible_indices: 外部指定的可见传感器索引, shape [B, c]
+            mask_indices: 外部指定的被掩码传感器索引, shape [B, num_masked]
+        Returns:
+            x_encoded: 编码器输出, shape [B, c, d_model]
+            visible_indices: 同输入
+            mask_indices: 同输入
+            batch_X: 切分后的原始窗口数据 [B, L, C]
+        """
+        D, C = x.shape
+        B = visible_indices.shape[0]  # 批次大小由外部掩码决定
+        L = self.L
+
+        # 1. 批次切分（与 forward 完全一致）
+        if D <= L:
+            starts = torch.zeros(B, dtype=torch.long)
+        else:
+            starts = torch.randint(0, D - L + 1, (B,))
+        batch_X = torch.stack([x[s : s + L, :] for s in starts], dim=0)
+
+        # 2. 跳过 ChannelMasking，直接使用外部传入的掩码索引
+        B_dim, L_dim, C_dim = batch_X.shape
+        c_dim = visible_indices.shape[1]
+        batch_idx = torch.arange(B_dim, device=x.device).unsqueeze(1)
+        x_visible = batch_X[batch_idx, :, visible_indices]  # [B, c, L]
+
+        # 3. 因果卷积（与 forward 完全一致）
+        x_conv_in = x_visible.reshape(B_dim * c_dim, 1, L_dim)
+        out = self.conv1(x_conv_in)
+        out = self.relu(out)
+        out = self.conv2(out)
+        out = self.relu(out)
+        out = self.conv3(out)
+        out = self.relu(out)
+
+        d_conv = out.shape[1]
+        L_final = out.shape[2]
+        out = out.view(B_dim, c_dim, d_conv, L_final)
+
+        # 4. 加权池化 + 线性映射
+        out = self.weighted_pool(out)   # -> [B, c, 128, 1]
+        out = out.squeeze(-1)           # -> [B, c, 128]
+        out = self.linear(out)          # -> [B, c, d_model]
+
+        return out, visible_indices, mask_indices, batch_X
