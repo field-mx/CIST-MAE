@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-步骤 C：基于先验概率的加权掩码微调 (Weighted Mask Fine-tuning)
+步骤 C：基于传感器重要性的加权 Loss 微调 (Weighted Loss Fine-tuning)
 
-加载 Apriori 挖掘的传感器保留概率，替换均匀随机掩码为加权随机掩码，
-使用更小学习率微调预训练模型。
+掩码策略与预训练一致（均匀随机），但 Loss 中对重要传感器的重构误差赋予更高权重，
+使模型更加关注关键通道的重构精度。
 
 Usage:
     python finetune.py
@@ -17,7 +17,6 @@ import pandas as pd
 
 from models.dataset import DataSeperate
 from models.cist_mae import CIST_MAE
-from models.weighted_channel_masking import WeightedChannelMasking
 from DataSave import DataSaver
 
 
@@ -37,12 +36,12 @@ def finetune():
     mask_ratio = 0.4
 
     # 微调参数
-    epochs = 200
-    learning_rate = 1e-4  # 比预训练小 10 倍
+    epochs = 500
+    learning_rate = 5e-4  # 比预训练小 10 倍
     weight_decay = 5e-2
     grad_clip = 1.0
     lambda_signal = 1
-    patience = 80
+    patience = 100
 
     # ============ 2. 设备选择 ============
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -87,56 +86,8 @@ def finetune():
     else:
         model.load_state_dict(ckpt)
 
-    # ============ 6. 替换掩码模块为加权掩码 ============
-    print("[INFO] 替换 ChannelMasking -> WeightedChannelMasking")
-    weighted_masking = WeightedChannelMasking(
-        retain_probs=retain_probs,
-        mask_ratio=mask_ratio,
-    ).to(device)
-    # 替换 TemporalEncoder 内部的掩码生成逻辑
-    # 通过猴子补丁(monkey-patch)方式覆盖 forward 中的掩码步骤
-    original_forward = model.temporal_encoder.forward
-
-    def weighted_forward(x):
-        """用加权掩码替换均匀掩码的 TemporalEncoder forward"""
-        D, C = x.shape
-        B = model.temporal_encoder.Batchsize
-        L_val = model.temporal_encoder.L
-
-        # 1. 批次切分
-        if D <= L_val:
-            starts = torch.zeros(B, dtype=torch.long)
-        else:
-            starts = torch.randint(0, D - L_val + 1, (B,))
-        batch_X = torch.stack([x[s : s + L_val, :] for s in starts], dim=0)
-
-        # 2. 加权掩码（替换原来的均匀随机掩码）
-        visible_indices, mask_indices = weighted_masking(batch_X)
-        B_dim, L_dim, C_dim = batch_X.shape
-        c_dim = visible_indices.shape[1]
-        batch_idx = torch.arange(B_dim, device=x.device).unsqueeze(1)
-        x_visible = batch_X[batch_idx, :, visible_indices]
-
-        # 3. 因果卷积
-        x_conv_in = x_visible.reshape(B_dim * c_dim, 1, L_dim)
-        out = model.temporal_encoder.conv1(x_conv_in)
-        out = model.temporal_encoder.relu(out)
-        out = model.temporal_encoder.conv2(out)
-        out = model.temporal_encoder.relu(out)
-        out = model.temporal_encoder.conv3(out)
-        out = model.temporal_encoder.relu(out)
-        d_conv = out.shape[1]
-        L_final = out.shape[2]
-        out = out.view(B_dim, c_dim, d_conv, L_final)
-
-        # 4. 加权池化 + 线性映射
-        out = model.temporal_encoder.weighted_pool(out)
-        out = out.squeeze(-1)
-        out = model.temporal_encoder.linear(out)
-
-        return out, visible_indices, mask_indices, batch_X
-
-    model.temporal_encoder.forward = weighted_forward
+    # ============ 6. 使用原始均匀随机掩码（不替换） ============
+    print("[INFO] 掩码策略: 均匀随机掩码 (与预训练一致)")
 
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"[INFO] 模型可训练参数量: {num_params:,}")
@@ -147,7 +98,59 @@ def finetune():
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
-    # ============ 8. 微调训练循环 ============
+    # ============ 8. 构建通道级 Loss 权重 ============
+    # 基于 importance 数组构建权重：重要度越高,说明越重构,loss 权重越大，让模型更加关注
+    importance_values = torch.tensor(sensor_df.sort_values('sensor_idx')['importance'].values,
+                                     dtype=torch.float32).to(device)
+    # 归一化为均值=1的权重（确保总 loss 量级不变）
+    # channel_weights = importance_values / importance_values.mean()
+    channel_weights = importance_values
+    print(f"[INFO] 通道 Loss 权重范围: [{channel_weights.min():.3f}, {channel_weights.max():.3f}]")
+
+    def compute_weighted_loss(signal_out, sequence_out, batch_X, mask_indices):
+        """
+        计算通道加权 MSE Loss。
+        重要传感器的重构误差被放大，冗余传感器的误差被缩小。
+        """
+        B = batch_X.shape[0]
+        batch_idx = torch.arange(B, device=batch_X.device).unsqueeze(1)
+
+        # --- 分支一：信号预测损失 (加权) ---
+        y_signal_true = batch_X[:, -1, :].unsqueeze(-1)  # [B, C, 1]
+        pred_signal = signal_out[batch_idx, mask_indices]  # [B, num_masked, 1]
+        true_signal = y_signal_true[batch_idx, mask_indices]  # [B, num_masked, 1]
+        # 获取被掩码传感器对应的权重 [B, num_masked]
+        mask_weights = channel_weights[mask_indices]  # [B, num_masked]
+        # 逐通道加权 MSE
+        signal_error = ((pred_signal.squeeze(-1) - true_signal.squeeze(-1)) ** 2) * mask_weights
+        loss_signal = signal_error.mean()
+
+        # --- 分支二：时序重构损失 (加权) ---
+        y_seq_true = batch_X.permute(0, 2, 1)  # [B, C, L]
+        pred_seq = sequence_out[batch_idx, mask_indices]  # [B, num_masked, L]
+        true_seq = y_seq_true[batch_idx, mask_indices]  # [B, num_masked, L]
+        # 逐通道加权（权重广播到 L 维度）
+        seq_error = ((pred_seq - true_seq) ** 2).mean(dim=-1) * mask_weights
+        loss_sequence = seq_error.mean()
+
+        # --- 总损失 ---
+        loss = lambda_signal * loss_signal + (1 - lambda_signal) * loss_sequence
+        return loss
+
+    # 缓存钩子：包装原始 TemporalEncoder.forward，
+    # 在每次前向传播后缓存 mask_indices 和 batch_X 供加权 Loss 使用
+    _original_te_forward = model.temporal_encoder.forward
+
+    def _caching_forward(x):
+        out, visible_indices, mask_indices, batch_X = _original_te_forward(x)
+        # 缓存到模型对象上，供 compute_weighted_loss 读取
+        model._cached_mask_indices = mask_indices
+        model._cached_batch_X = batch_X
+        return out, visible_indices, mask_indices, batch_X
+
+    model.temporal_encoder.forward = _caching_forward
+
+    # ============ 9. 微调训练循环 ============
     best_val_loss = float("inf")
     patience_counter = 0
     print(f"\n[INFO] 开始微调, 共 {epochs} 个 epoch (Early Stopping patience={patience})\n")
@@ -165,7 +168,12 @@ def finetune():
         for step in range(steps_per_epoch):
             optimizer.zero_grad()
             noisy_train_data = train_data + torch.rand_like(train_data) * 0.01
-            signal_out, sequence_out, train_loss = model(noisy_train_data)
+            signal_out, sequence_out, _ = model(noisy_train_data)
+            # 使用缓存的中间变量计算加权 Loss
+            train_loss = compute_weighted_loss(
+                signal_out, sequence_out,
+                model._cached_batch_X, model._cached_mask_indices
+            )
             train_loss.backward()
             if grad_clip > 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
@@ -180,7 +188,11 @@ def finetune():
         with torch.no_grad():
             val_losses = []
             for _ in range(10):
-                _, _, vl = model(val_data)
+                signal_out, sequence_out, _ = model(val_data)
+                vl = compute_weighted_loss(
+                    signal_out, sequence_out,
+                    model._cached_batch_X, model._cached_mask_indices
+                )
                 val_losses.append(vl.item())
             avg_val_loss = sum(val_losses) / len(val_losses)
 

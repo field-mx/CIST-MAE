@@ -303,7 +303,8 @@ def run_analysis():
     # ============ 计算传感器重要性 ============
     print(f"\n[INFO] 计算传感器保留概率...")
     retain_probs, importance = compute_sensor_importance(freq_items, rules, N)
-    
+    # 将保留概率取反，得到掩码概率 【提升模型泛化力】
+    # retain_probs = 1-retain_probs
     sensor_df = pd.DataFrame({
         'sensor_id': [f'S{i}' for i in range(N)],
         'importance': importance,

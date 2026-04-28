@@ -104,7 +104,7 @@ def run_mask_probe():
 
     df = pd.DataFrame(results)
     save_path = os.path.join(save_dir, "0.4mask_probe_results.csv")
-    df.to_csv(save_path, index=False)
+    #df.to_csv(save_path, index=False)
 
     print(f"\n{'='*50}")
     print(f"[INFO] 掩码探测完成!")
