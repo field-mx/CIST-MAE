@@ -68,35 +68,69 @@ def load_model(device):
     return model
 
 
-def compute_accuracy(model, data, visible_indices, mask_indices, device):
+def compute_accuracy(model, data, visible_indices, mask_indices, device, train_mean, train_std, save_csv_path=None):
     """
     给定掩码方案，计算预测准确率。
     
-    准确率定义：1 - RMSE / std(真实值)
-    即归一化 RMSE（NRMSE），反映预测值对真实值的接近程度。
-    值越大越好，1 代表完美预测，0 代表与标准差同量级的误差。
+    准确率定义：1-（预测值残差/真值）
     
     Args:
         model: CIST_MAE 模型
         data: 验证集数据 [D, C]
         visible_indices: np.array, 可见传感器索引
         mask_indices: np.array, 被掩码传感器索引
+        device: torch device
+        train_mean: 训练集均值
+        train_std: 训练集标准差
     Returns:
         accuracy: 预测准确率 (float)
+        mse: 均方误差 (float)
     """
     B = BATCH_SIZE
     vis_idx = torch.from_numpy(visible_indices).unsqueeze(0).expand(B, -1).to(device)
     msk_idx = torch.from_numpy(mask_indices).unsqueeze(0).expand(B, -1).to(device)
 
-    signal_out, sequence_out, loss = model.forward_with_mask(data, vis_idx, msk_idx)
+    # 手动走一遍模型获取 batch_X 和预测值，保证时间窗是对齐的
+    tokens, vis_idx_out, msk_idx_out, batch_X = model.temporal_encoder.forward_with_mask(data, vis_idx, msk_idx)
+    encoded = model.spatial_encoder(tokens, vis_idx_out)
+    decoded = model.spatial_decoder(encoded, vis_idx_out, msk_idx_out)
+    signal_out, sequence_out = model.projection_head(decoded)
 
-    # 获取 batch_X 需要重新走一遍 temporal_encoder 来拿 batch_X
-    # 但 loss 已经是 MSE loss，我们可以用 loss 来反推准确率
-    # 准确率 = 1 - sqrt(loss)  （因为 loss 是 MSE，数据已经 z-score 标准化，std≈1）
-    # 对 z-score 标准化后的数据，NRMSE ≈ sqrt(MSE) / 1 = sqrt(MSE)
-    mse = loss.item()
-    rmse = np.sqrt(max(mse, 0))
-    accuracy = max(0.0, 1.0 - mse)
+    # 计算 MSE loss
+    y_signal_true = batch_X[:, -1, :].unsqueeze(-1)
+    batch_idx = torch.arange(B, device=device).unsqueeze(1)
+    pred_signal = signal_out[batch_idx, msk_idx_out]
+    true_signal = y_signal_true[batch_idx, msk_idx_out]
+    mse = torch.nn.functional.mse_loss(pred_signal, true_signal).item()
+
+    # 1. 提取预测值和真实值
+    pred_std = pred_signal.squeeze(-1) # 得到标准化预测值 [B, num_masked]
+    true_std = true_signal.squeeze(-1) # 得到标准化真实值 [B, num_masked]
+
+    # 提取被掩码传感器的均值和方差
+    mu = train_mean[mask_indices].to(device)
+    sigma = train_std[mask_indices].to(device)
+    
+    # 反归一化还原物理值
+    pred_phys = pred_std * sigma + mu
+    true_phys = true_std * sigma + mu
+    
+    # 计算误差
+    # 使用传感器的均值(mu)作为基准计算相对误差，避免个别时刻真实值接近0导致百分比误差爆炸
+    error = torch.abs(pred_phys - true_phys) / (torch.abs(mu) )
+    accuracy = 1 - error.mean().item()
+    
+    if save_csv_path:
+        # 保存第一个样本 (Batch 0) 的真实值和预测值
+        b_idx = 0
+        df_save = pd.DataFrame({
+            'Sensor_ID': [f"S{idx}" for idx in mask_indices],
+            'True_Value': true_phys[b_idx].cpu().numpy(),
+            'Pred_Value': pred_phys[b_idx].cpu().numpy(),
+            'Abs_Error': torch.abs(pred_phys[b_idx] - true_phys[b_idx]).cpu().numpy()
+        })
+        df_save.to_csv(save_csv_path, index=False)
+        print(f"[INFO] 已保存样本数据至 {save_csv_path}")
 
     return accuracy, mse
 
@@ -120,7 +154,7 @@ def get_sensor_importance_order():
     return sensor_indices_low_to_high
 
 
-def run_random_mask_experiment(model, data, device):
+def run_random_mask_experiment(model, data, device, train_mean, train_std):
     """
     实验 1：随机掩码
     
@@ -153,8 +187,10 @@ def run_random_mask_experiment(model, data, device):
             visible_indices.sort()
 
             with torch.no_grad():
+                # 仅在掩码率为 0.40 的第一次循环时保存一组预测数据样本
+                save_path = os.path.join(SAVE_DIR, "sample_predictions_0.40.csv") if (abs(mr - 0.40) < 1e-5 and rep == 0) else None
                 acc, mse = compute_accuracy(
-                    model, data, visible_indices, mask_indices, device
+                    model, data, visible_indices, mask_indices, device, train_mean, train_std, save_csv_path=save_path
                 )
             accs.append(acc)
             mses.append(mse)
@@ -187,7 +223,7 @@ def run_random_mask_experiment(model, data, device):
     return df
 
 
-def run_ordered_mask_experiment(model, data, device):
+def run_ordered_mask_experiment(model, data, device, train_mean, train_std):
     """
     实验 2：有序掩码（传感器重要度由轻到重依次掩码）
     
@@ -221,7 +257,7 @@ def run_ordered_mask_experiment(model, data, device):
             # 重复 50 次：虽然掩码固定，但 temporal_encoder 内部窗口切分是随机的
             with torch.no_grad():
                 acc, mse = compute_accuracy(
-                    model, data, visible_indices, mask_indices, device
+                    model, data, visible_indices, mask_indices, device, train_mean, train_std
                 )
             accs.append(acc)
             mses.append(mse)
@@ -266,6 +302,11 @@ def main():
     print("[INFO] 加载数据...")
     ds = DataSeperate(file_path=EXCEL_PATH)
     ds.process()
+    # 它们分别保存在：
+    # ds.train_mean  <- 形状为 [61] 的张量，保存每个传感器的均值
+    # ds.train_std   <- 形状为 [61] 的张量，保存每个传感器的标准差
+    train_mean = ds.train_mean
+    train_std = ds.train_std
     val_data = ds.val_tensor.to(device)
     print(f"[INFO] 验证集: {val_data.shape}")
 
@@ -273,10 +314,10 @@ def main():
     model = load_model(device)
 
     # ========= 实验 1：随机掩码 =========
-    df_random = run_random_mask_experiment(model, val_data, device)
+    df_random = run_random_mask_experiment(model, val_data, device, train_mean, train_std)
 
     # ========= 实验 2：有序掩码 =========
-    df_ordered = run_ordered_mask_experiment(model, val_data, device)
+    df_ordered = run_ordered_mask_experiment(model, val_data, device, train_mean, train_std)
 
     # ========= 汇总 =========
     print("\n" + "=" * 60)
