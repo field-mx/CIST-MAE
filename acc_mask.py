@@ -192,7 +192,7 @@ def run_random_mask_experiment(model, data, device, train_mean, train_std):
                 acc, mse = compute_accuracy(
                     model, data, visible_indices, mask_indices, device, train_mean, train_std, save_csv_path=save_path
                 )
-            accs.append(acc)
+            accs.append(1-mse)
             mses.append(mse)
 
         avg_acc = np.mean(accs)
@@ -259,7 +259,7 @@ def run_ordered_mask_experiment(model, data, device, train_mean, train_std):
                 acc, mse = compute_accuracy(
                     model, data, visible_indices, mask_indices, device, train_mean, train_std
                 )
-            accs.append(acc)
+            accs.append(1-mse)
             mses.append(mse)
 
         avg_acc = np.mean(accs)
