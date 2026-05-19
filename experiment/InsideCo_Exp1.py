@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 内部聚类验证实验：三种掩码策略对比
+变化掩码率，验证聚类内推断比
 
 实验设计：
     横坐标：mask_ratio ∈ [0.05, 0.95], step=0.01
@@ -165,11 +166,11 @@ def generate_intra_cluster_mask(num_masked, clusters_list, rng):
     return np.array(sorted(masked[:num_masked]))
 
 
-def generate_random_mask(num_masked, rng):
+def generate_random_mask(num_masked, real_sensors, rng):
     """
-    对照组 2：纯随机掩码。
+    对照组 2：纯随机掩码（仅在有簇的传感器中随机）。
     """
-    indices = rng.choice(NUM_SENSORS, size=num_masked, replace=False)
+    indices = rng.choice(real_sensors, size=num_masked, replace=False)
     return np.sort(indices)
 
 
@@ -182,18 +183,17 @@ def main():
     with open(CLUSTERS_PATH, 'r') as f:
         clusters_raw = json.load(f)
 
-    # 提取所有簇（包括孤立传感器，每个孤立传感器视为单独一个簇）
+    # 提取所有真实簇（大小 > 1 的簇）
     clusters_list = []
+    real_sensors = []
     for cname, cinfo in clusters_raw.items():
         sensors = cinfo["sensors"]
-        if cname == "Orphans":
-            # 每个孤立传感器单独成簇
-            for s in sensors:
-                clusters_list.append([s])
-        else:
+        if cname != "Orphans" and len(sensors) > 1:
             clusters_list.append(sensors)
+            real_sensors.extend(sensors)
     
-    print(f"[INFO] 聚类数量: {len(clusters_list)} (含孤立传感器单独成簇)")
+    num_real_sensors = len(real_sensors)
+    print(f"[INFO] 真实聚类数量 (size>1): {len(clusters_list)}，共包含传感器: {num_real_sensors} 个")
     for i, c in enumerate(clusters_list):
         print(f"  簇 {i}: {[f'S{s}' for s in c]}")
 
@@ -217,8 +217,8 @@ def main():
     print(f"       每个掩码率重复 {NUM_REPEATS} 次\n")
     
     for mr in tqdm(mask_ratios, desc="Mask Ratio Sweep"):
-        num_masked = max(1, int(round(mr * NUM_SENSORS)))
-        num_masked = min(num_masked, NUM_SENSORS - 1)  # 至少保留 1 个可见
+        num_masked = max(1, int(round(mr * num_real_sensors)))
+        num_masked = min(num_masked, num_real_sensors - 1)  # 至少保留 1 个可见
         
         num_visible = NUM_SENSORS - num_masked
         
@@ -234,7 +234,7 @@ def main():
             vis_inter = np.array([i for i in range(NUM_SENSORS) if i not in mask_inter])
             with torch.no_grad():
                 acc, mse = compute_accuracy(model, val_data, vis_inter, mask_inter, train_mean, train_std)
-            accs_inter.append(1-mse)
+            accs_inter.append(1-mse)  # 使用物理相对准确率
             mses_inter.append(mse)
             
             # ---- 对照组 1：簇内团灭掩码 ----
@@ -242,15 +242,15 @@ def main():
             vis_intra = np.array([i for i in range(NUM_SENSORS) if i not in mask_intra])
             with torch.no_grad():
                 acc, mse = compute_accuracy(model, val_data, vis_intra, mask_intra, train_mean, train_std)
-            accs_intra.append(1-mse)
+            accs_intra.append(1-mse)  # 使用物理相对准确率
             mses_intra.append(mse)
             
             # ---- 对照组 2：纯随机掩码 ----
-            mask_rand = generate_random_mask(num_masked, rng)
+            mask_rand = generate_random_mask(num_masked, real_sensors, rng)
             vis_rand = np.array([i for i in range(NUM_SENSORS) if i not in mask_rand])
             with torch.no_grad():
                 acc, mse = compute_accuracy(model, val_data, vis_rand, mask_rand, train_mean, train_std)
-            accs_random.append(1-mse)
+            accs_random.append(1-mse)  # 使用物理相对准确率
             mses_random.append(mse)
         
         results.append({
