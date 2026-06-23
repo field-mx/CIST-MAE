@@ -283,6 +283,10 @@ CIST-MAE/
 ├── configs/                  # 配置文件
 │   └── default.yaml
 ├── data/                     # 数据目录
+├── experiment/               # 内部聚类与聚类验证实验
+│   ├── InsideCo.py           # 基于高 Loss 灾难区的内部聚类发现
+│   ├── InsideCo_Exp1.py      # 三种掩码策略对比实验
+│   └── Intra_cluster_Support.py # 簇内互助与跨簇推断验证
 ├── models/                   # 模型模块
 │   ├── channel_masking.py    # 通道掩码模块
 │   ├── cist_mae.py           # CIST-MAE 主模型
@@ -291,7 +295,10 @@ CIST-MAE/
 │   ├── spatial_decoder.py    # 空间解码器
 │   ├── spatial_encoder.py    # 空间编码器
 │   └── temporal_encoder.py   # 时序编码器
+├── results/                  # 训练日志、聚类结果与可视化输出
 ├── utils/                    # 工具函数
+├── mask_probe.py             # 掩码组合 Loss 探测
+├── mask_analysis.py          # Loss 分箱与关联规则分析
 ├── train.py                  # 训练入口
 ├── evaluate.py               # 评估入口
 ├── test_pipeline.py          # 测试脚本
@@ -427,6 +434,55 @@ python evaluate.py --config configs/default.yaml --checkpoint checkpoints/best.p
 
 > 注：请根据实际实验日志补充不同掩码率下的 MAE、RMSE、R²、预测精度等指标。
 
+### 11.1 内部聚类（InsideCo）实验
+
+为了进一步解释 CIST-MAE 学到的跨传感器依赖关系，本项目增加了内部聚类实验。该实验不直接使用物理拓扑标签，而是从模型在不同掩码组合下的重构损失出发，挖掘“同时被掩码时更容易导致高损失”的传感器组合，从而发现具有较强冗余或互补关系的传感器簇。
+
+实验流程如下：
+
+1. 使用掩码探测结果 `results/0.4mask_probe_results.csv`，其中每条记录包含一组 `mask_vector` 及其平均重构损失 `avg_loss`；
+2. 通过 K-Means 将掩码组合按 Loss 分为 `S_low`、`S_mid`、`S_high` 三类，并选取高损失灾难区 `S_high`；
+3. 对 `S_high` 中共同失效的传感器组合进行 Apriori 关联规则挖掘；
+4. 根据一对一规则的 Lift 值进行贪心聚类，得到内部冗余传感器簇；
+5. 通过掩码策略对比和受控簇内支援实验验证聚类结果。
+
+运行顺序：
+
+```bash
+python experiment/InsideCo.py
+python experiment/InsideCo_Exp1.py
+python experiment/Intra_cluster_Support.py
+```
+
+其中 `InsideCo.py` 依赖已经生成的 `results/0.4mask_probe_results.csv`，验证实验依赖 `checkpoints/best.pth`、`data/SensorData.xlsx` 和 `results/inside_clusters.json`。
+
+聚类发现阶段输出：
+
+| Output | Description |
+|---|---|
+| `results/inside_frequent_items.csv` | 高 Loss 灾难区中的频繁项集 |
+| `results/inside_rules.csv` | Apriori 关联规则及 Lift 指标 |
+| `results/inside_clusters.json` | 基于 Lift 贪心构建的内部聚类结果 |
+
+当前聚类结果共发现 13 个非孤立簇，覆盖 56 个传感器，另有 5 个孤立传感器。Top 聚类示例如下：
+
+| Cluster | Sensors | Avg Lift |
+|---|---|---:|
+| Cluster_0 | S33, S34, S35, S38, S46, S51 | 1.0863 |
+| Cluster_1 | S2, S6, S16, S18, S25, S43 | 1.0482 |
+| Cluster_2 | S8, S12, S30, S52 | 1.0471 |
+| Cluster_3 | S15, S31, S49, S57 | 1.0468 |
+| Cluster_4 | S1, S10, S21, S26, S36, S54 | 1.0420 |
+
+聚类验证实验包括两组：
+
+| Experiment | Design | Output | Current Summary |
+|---|---|---|---|
+| Exp1: 掩码策略扫描 | 比较跨簇分散掩码、簇内集中掩码、随机掩码，掩码率从 0.05 扫描到 0.90 | `results/Exp1_InsideCo_sweep.csv`, `results/Exp1_InsideCo_sweep.png` | 跨簇分散掩码在 69/86 个掩码率上优于簇内集中掩码，说明保留簇内信息通常有利于重构 |
+| Exp2: 簇内互助验证 | 固定可见传感器数量，对比“目标传感器的簇内伙伴可见”和“仅跨簇外部传感器可见” | `results/Exp2_IntraCluster_Support.csv`, `results/Exp2_IntraCluster_Support.png` | 簇内伙伴可见时平均 `1-MSE` 为 92.17%，跨簇外部支援为 89.14%，簇内方案在 34/56 个目标传感器上胜出 |
+
+上述结果表明，CIST-MAE 的重构性能不仅依赖可见传感器数量，也受到可见传感器结构位置的影响；同一内部簇中的传感器在部分情况下能够提供更强的替补信息。
+
 ---
 
 ## 12. 可视化结果
@@ -438,6 +494,7 @@ python evaluate.py --config configs/default.yaml --checkpoint checkpoints/best.p
 3. 不同 mask ratio 下的性能变化曲线；
 4. 被掩码通道的历史序列重构结果；
 5. 消融实验对比图。
+6. 内部聚类划分与簇内/跨簇支援验证结果图。
 
 推荐目录结构：
 
